@@ -2,8 +2,12 @@ package ffuf
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -65,6 +69,8 @@ func (j *Job) Start() {
 		j.Output.Banner()
 	}
 	j.Running = true
+	// Monitor for SIGTERM and do cleanup properly (writing the output files etc)
+	j.interruptMonitor()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go j.runProgress(&wg)
@@ -85,7 +91,7 @@ func (j *Job) Start() {
 		go func() {
 			defer func() { <-limiter }()
 			defer wg.Done()
-			j.runTask([]byte(nextInput), nextPosition, false)
+			j.runTask(nextInput, nextPosition, false)
 			if j.Config.Delay.HasDelay {
 				var sleepDurationMS time.Duration
 				if j.Config.Delay.IsRange {
@@ -102,6 +108,17 @@ func (j *Job) Start() {
 	j.updateProgress()
 	j.Output.Finalize()
 	return
+}
+
+func (j *Job) interruptMonitor() {
+	sigChan := make(chan os.Signal, 2)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		for _ = range sigChan {
+			j.Error = "Caught keyboard interrupt (Ctrl-C)\n"
+			j.Stop()
+		}
+	}()
 }
 
 func (j *Job) runProgress(wg *sync.WaitGroup) {
@@ -157,18 +174,20 @@ func (j *Job) isMatch(resp Response) bool {
 	return true
 }
 
-func (j *Job) runTask(input []byte, position int, retried bool) {
+func (j *Job) runTask(input map[string][]byte, position int, retried bool) {
 	req, err := j.Runner.Prepare(input)
 	req.Position = position
 	if err != nil {
 		j.Output.Error(fmt.Sprintf("Encountered an error while preparing request: %s\n", err))
 		j.incError()
+		log.Printf("%s", err)
 		return
 	}
 	resp, err := j.Runner.Execute(&req)
 	if err != nil {
 		if retried {
 			j.incError()
+			log.Printf("%s", err)
 		} else {
 			j.runTask(input, position, true)
 		}
@@ -205,10 +224,16 @@ func (j *Job) CalibrateResponses() ([]Response, error) {
 
 	results := make([]Response, 0)
 	for _, input := range cInputs {
-		req, err := j.Runner.Prepare([]byte(input))
+		inputs := make(map[string][]byte, 0)
+		for _, v := range j.Config.InputProviders {
+			inputs[v.Keyword] = []byte(input)
+		}
+
+		req, err := j.Runner.Prepare(inputs)
 		if err != nil {
 			j.Output.Error(fmt.Sprintf("Encountered an error while preparing request: %s\n", err))
 			j.incError()
+			log.Printf("%s", err)
 			return results, err
 		}
 		resp, err := j.Runner.Execute(&req)

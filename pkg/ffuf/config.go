@@ -16,8 +16,7 @@ type optRange struct {
 }
 
 type Config struct {
-	StaticHeaders          map[string]string
-	FuzzHeaders            map[string]string
+	Headers                map[string]string
 	Extensions             []string
 	DirSearchCompat        bool
 	Method                 string
@@ -26,9 +25,10 @@ type Config struct {
 	Data                   string
 	Quiet                  bool
 	Colors                 bool
-	Wordlist               string
-	InputCommand           string
+	InputProviders         []InputProviderConfig
+	CommandKeywords        []string
 	InputNum               int
+	InputMode              string
 	OutputFile             string
 	OutputFormat           string
 	StopOn403              bool
@@ -37,7 +37,6 @@ type Config struct {
 	FollowRedirects        bool
 	AutoCalibration        bool
 	AutoCalibrationStrings []string
-	ShowRedirectLocation   bool
 	Timeout                int
 	ProgressFrequency      int
 	Delay                  optRange
@@ -47,13 +46,19 @@ type Config struct {
 	Context                context.Context
 	ProxyURL               func(*http.Request) (*url.URL, error)
 	CommandLine            string
+	Verbose                bool
+}
+
+type InputProviderConfig struct {
+	Name    string
+	Keyword string
+	Value   string
 }
 
 func NewConfig(ctx context.Context) Config {
 	var conf Config
 	conf.Context = ctx
-	conf.StaticHeaders = make(map[string]string)
-	conf.FuzzHeaders = make(map[string]string)
+	conf.Headers = make(map[string]string)
 	conf.Method = "GET"
 	conf.Url = ""
 	conf.TLSVerify = false
@@ -62,10 +67,11 @@ func NewConfig(ctx context.Context) Config {
 	conf.StopOn403 = false
 	conf.StopOnErrors = false
 	conf.StopOnAll = false
-	conf.ShowRedirectLocation = false
 	conf.FollowRedirects = false
-	conf.InputCommand = ""
+	conf.InputProviders = make([]InputProviderConfig, 0)
+	conf.CommandKeywords = make([]string, 0)
 	conf.InputNum = 0
+	conf.InputMode = "clusterbomb"
 	conf.ProxyURL = http.ProxyFromEnvironment
 	conf.Filters = make([]FilterProvider, 0)
 	conf.Delay = optRange{0, 0, false, false}
@@ -74,5 +80,6 @@ func NewConfig(ctx context.Context) Config {
 	// Progress update frequency, in milliseconds
 	conf.ProgressFrequency = 100
 	conf.DirSearchCompat = false
+	conf.Verbose = false
 	return conf
 }

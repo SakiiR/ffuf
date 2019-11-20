@@ -27,12 +27,15 @@ type Stdoutput struct {
 }
 
 type Result struct {
-	Input         string `json:"input"`
-	Position      int    `json:"position"`
-	StatusCode    int64  `json:"status"`
-	ContentLength int64  `json:"length"`
-	ContentWords  int64  `json:"words"`
-	HTMLColor     string `json:"html_color"`
+	Input            map[string][]byte `json:"input"`
+	Position         int               `json:"position"`
+	StatusCode       int64             `json:"status"`
+	ContentLength    int64             `json:"length"`
+	ContentWords     int64             `json:"words"`
+	ContentLines     int64             `json:"lines"`
+	RedirectLocation string            `json:"redirectlocation"`
+	Url              string            `json:"url"`
+	HTMLColor        string            `json:"-"`
 }
 
 func NewStdoutput(conf *ffuf.Config) *Stdoutput {
@@ -46,9 +49,64 @@ func (s *Stdoutput) Banner() error {
 	fmt.Printf("%s\n       v%s\n%s\n\n", BANNER_HEADER, ffuf.VERSION, BANNER_SEP)
 	printOption([]byte("Method"), []byte(s.config.Method))
 	printOption([]byte("URL"), []byte(s.config.Url))
+	// Print headers
+	if len(s.config.Headers) > 0 {
+		for k, v := range s.config.Headers {
+			printOption([]byte("Header"), []byte(fmt.Sprintf("%s: %s", k, v)))
+		}
+	}
+	// Print POST data
+	if len(s.config.Data) > 0 {
+		printOption([]byte("Data"), []byte(s.config.Data))
+	}
+
+	// Print extensions
+	if len(s.config.Extensions) > 0 {
+		exts := ""
+		for _, ext := range s.config.Extensions {
+			exts = fmt.Sprintf("%s%s ", exts, ext)
+		}
+		printOption([]byte("Extensions"), []byte(exts))
+	}
+
+	// Output file info
+	if len(s.config.OutputFile) > 0 {
+		printOption([]byte("Output file"), []byte(s.config.OutputFile))
+		printOption([]byte("File format"), []byte(s.config.OutputFormat))
+	}
+
+	// Follow redirects?
+	follow := fmt.Sprintf("%t", s.config.FollowRedirects)
+	printOption([]byte("Follow redirects"), []byte(follow))
+
+	// Autocalibration
+	autocalib := fmt.Sprintf("%t", s.config.AutoCalibration)
+	printOption([]byte("Calibration"), []byte(autocalib))
+
+	// Timeout
+	timeout := fmt.Sprintf("%d", s.config.Timeout)
+	printOption([]byte("Timeout"), []byte(timeout))
+
+	// Threads
+	threads := fmt.Sprintf("%d", s.config.Threads)
+	printOption([]byte("Threads"), []byte(threads))
+
+	// Delay?
+	if s.config.Delay.HasDelay {
+		delay := ""
+		if s.config.Delay.IsRange {
+			delay = fmt.Sprintf("%.2f - %.2f seconds", s.config.Delay.Min, s.config.Delay.Max)
+		} else {
+			delay = fmt.Sprintf("%.2f seconds", s.config.Delay.Min)
+		}
+		printOption([]byte("Delay"), []byte(delay))
+	}
+
+	// Print matchers
 	for _, f := range s.config.Matchers {
 		printOption([]byte("Matcher"), []byte(f.Repr()))
 	}
+	// Print filters
 	for _, f := range s.config.Filters {
 		printOption([]byte("Filter"), []byte(f.Repr()))
 	}
@@ -109,6 +167,8 @@ func (s *Stdoutput) Finalize() error {
 	if s.config.OutputFile != "" {
 		if s.config.OutputFormat == "json" {
 			err = writeJSON(s.config, s.Results)
+		} else if s.config.OutputFormat == "ejson" {
+			err = writeEJSON(s.config, s.Results)
 		} else if s.config.OutputFormat == "html" {
 			err = writeHTML(s.config, s.Results)
 		} else if s.config.OutputFormat == "md" {
@@ -132,12 +192,19 @@ func (s *Stdoutput) Result(resp ffuf.Response) {
 	// Check if we need the data later
 	if s.config.OutputFile != "" {
 		// No need to store results if we're not going to use them later
+		inputs := make(map[string][]byte, 0)
+		for k, v := range resp.Request.Input {
+			inputs[k] = v
+		}
 		sResult := Result{
-			Input:         string(resp.Request.Input),
-			Position:      resp.Request.Position,
-			StatusCode:    resp.StatusCode,
-			ContentLength: resp.ContentLength,
-			ContentWords:  resp.ContentWords,
+			Input:            inputs,
+			Position:         resp.Request.Position,
+			StatusCode:       resp.StatusCode,
+			ContentLength:    resp.ContentLength,
+			ContentWords:     resp.ContentWords,
+			ContentLines:     resp.ContentLines,
+			RedirectLocation: resp.GetRedirectLocation(),
+			Url:              resp.Request.Url,
 		}
 		s.Results = append(s.Results, sResult)
 	}
@@ -147,44 +214,77 @@ func (s *Stdoutput) printResult(resp ffuf.Response) {
 	if s.config.Quiet {
 		s.resultQuiet(resp)
 	} else {
-		s.resultNormal(resp)
+		if len(resp.Request.Input) > 1 || s.config.Verbose {
+			// Print a multi-line result (when using multiple input keywords and wordlists)
+			s.resultMultiline(resp)
+		} else {
+			s.resultNormal(resp)
+		}
 	}
+}
+
+func (s *Stdoutput) prepareInputsOneLine(resp ffuf.Response) string {
+	inputs := ""
+	if len(resp.Request.Input) > 1 {
+		for k, v := range resp.Request.Input {
+			if inSlice(k, s.config.CommandKeywords) {
+				// If we're using external command for input, display the position instead of input
+				inputs = fmt.Sprintf("%s%s : %s ", inputs, k, strconv.Itoa(resp.Request.Position))
+			} else {
+				inputs = fmt.Sprintf("%s%s : %s ", inputs, k, v)
+			}
+		}
+	} else {
+		for k, v := range resp.Request.Input {
+			if inSlice(k, s.config.CommandKeywords) {
+				// If we're using external command for input, display the position instead of input
+				inputs = strconv.Itoa(resp.Request.Position)
+			} else {
+				inputs = string(v)
+			}
+		}
+	}
+	return inputs
 }
 
 func (s *Stdoutput) resultQuiet(resp ffuf.Response) {
-	if len(s.config.InputCommand) > 0 {
-		// If we're using external command for input, display the position instead of input
-		fmt.Println(strconv.Itoa(resp.Request.Position))
-	} else {
-		fmt.Println(string(resp.Request.Input))
+	fmt.Println(s.prepareInputsOneLine(resp))
+}
+
+func (s *Stdoutput) resultMultiline(resp ffuf.Response) {
+	var res_hdr, res_str string
+	res_str = "%s%s    * %s: %s\n"
+	res_hdr = fmt.Sprintf("%s[Status: %d, Size: %d, Words: %d, Lines: %d]", TERMINAL_CLEAR_LINE, resp.StatusCode, resp.ContentLength, resp.ContentWords, resp.ContentLines)
+	res_hdr = s.colorize(res_hdr, resp.StatusCode)
+	reslines := ""
+	if s.config.Verbose {
+		reslines = fmt.Sprintf("%s%s| URL | %s\n", reslines, TERMINAL_CLEAR_LINE, resp.Request.Url)
+		redirectLocation := resp.GetRedirectLocation()
+		if redirectLocation != "" {
+			reslines = fmt.Sprintf("%s%s| --> | %s\n", reslines, TERMINAL_CLEAR_LINE, redirectLocation)
+		}
 	}
+	for k, v := range resp.Request.Input {
+		if inSlice(k, s.config.CommandKeywords) {
+			// If we're using external command for input, display the position instead of input
+			reslines = fmt.Sprintf(res_str, reslines, TERMINAL_CLEAR_LINE, k, strconv.Itoa(resp.Request.Position))
+		} else {
+			// Wordlist input
+			reslines = fmt.Sprintf(res_str, reslines, TERMINAL_CLEAR_LINE, k, v)
+		}
+	}
+	fmt.Printf("%s\n%s\n", res_hdr, reslines)
 }
 
 func (s *Stdoutput) resultNormal(resp ffuf.Response) {
-	var responseString string
-	if len(s.config.InputCommand) > 0 {
-		// If we're using external command for input, display the position instead of input
-		responseString = fmt.Sprintf("%s%-23s [Status: %s, Size: %d, Words: %d%s]", TERMINAL_CLEAR_LINE, strconv.Itoa(resp.Request.Position), s.colorizeStatus(resp.StatusCode), resp.ContentLength, resp.ContentWords, s.addRedirectLocation(resp))
-	} else {
-		responseString = fmt.Sprintf("%s%-23s [Status: %s, Size: %d, Words: %d%s]", TERMINAL_CLEAR_LINE, resp.Request.Input, s.colorizeStatus(resp.StatusCode), resp.ContentLength, resp.ContentWords, s.addRedirectLocation(resp))
-	}
-	fmt.Println(responseString)
+	var res_str string
+	res_str = fmt.Sprintf("%s%-23s [Status: %s, Size: %d, Words: %d, Lines: %d]", TERMINAL_CLEAR_LINE, s.prepareInputsOneLine(resp), s.colorize(fmt.Sprintf("%d", resp.StatusCode), resp.StatusCode), resp.ContentLength, resp.ContentWords, resp.ContentLines)
+	fmt.Println(res_str)
 }
 
-// addRedirectLocation returns a formatted string containing the Redirect location or returns an empty string
-func (s *Stdoutput) addRedirectLocation(resp ffuf.Response) string {
-	if s.config.ShowRedirectLocation == true {
-		redirectLocation := resp.GetRedirectLocation()
-		if redirectLocation != "" {
-			return fmt.Sprintf(", ->: %s", redirectLocation)
-		}
-	}
-	return ""
-}
-
-func (s *Stdoutput) colorizeStatus(status int64) string {
+func (s *Stdoutput) colorize(input string, status int64) string {
 	if !s.config.Colors {
-		return fmt.Sprintf("%d", status)
+		return fmt.Sprintf("%s", input)
 	}
 	colorCode := ANSI_CLEAR
 	if status >= 200 && status < 300 {
@@ -199,9 +299,18 @@ func (s *Stdoutput) colorizeStatus(status int64) string {
 	if status >= 500 && status < 600 {
 		colorCode = ANSI_RED
 	}
-	return fmt.Sprintf("%s%d%s", colorCode, status, ANSI_CLEAR)
+	return fmt.Sprintf("%s%s%s", colorCode, input, ANSI_CLEAR)
 }
 
 func printOption(name []byte, value []byte) {
-	fmt.Printf(" :: %-12s : %s\n", name, value)
+	fmt.Printf(" :: %-16s : %s\n", name, value)
+}
+
+func inSlice(key string, slice []string) bool {
+	for _, v := range slice {
+		if v == key {
+			return true
+		}
+	}
+	return false
 }

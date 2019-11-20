@@ -11,6 +11,7 @@ import (
 type htmlFileOutput struct {
 	CommandLine string
 	Time        string
+	Keys        []string
 	Results     []Result
 }
 
@@ -34,7 +35,13 @@ const (
     <link
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
-    />
+	/>
+	<link 
+	  rel="stylesheet" 
+	  type="text/css" 
+	  href="https://cdn.datatables.net/1.10.20/css/jquery.dataTables.css"
+	/>
+  
   </head>
 
   <body>
@@ -55,26 +62,30 @@ const (
 		<pre>{{ .CommandLine }}</pre>
 		<pre>{{ .Time }}</pre>
 
-   <table>
+   <table id="ffufreport">
         <thead>
         <div style="display:none">
-|result_raw|StatusCode|Input|Position|ContentLength|ContentWords| 
+|result_raw|StatusCode|Input|Position|ContentLength|ContentWords|ContentLines|
         </div>
           <tr>
               <th>Status</th>
-              <th>Input</th>
+{{ range .Keys }}              <th>{{ . }}</th>
+{{ end }}
+			  <th>URL</th>
+			  <th>Redirect location</th>
               <th>Position</th>
               <th>Length</th>
               <th>Words</th>
+              <th>Lines</th>
           </tr>
         </thead>
 
         <tbody>
-            {{range .Results}}
+			{{range $result := .Results}}
                 <div style="display:none">
-|result_raw|{{ .StatusCode }}|{{ .Input }}|{{ .Position }}|{{ .ContentLength }}|{{ .ContentWords }}| 
+|result_raw|{{ $result.StatusCode }}{{ range $keyword, $value := $result.Input }}|{{ $value | printf "%s" }}{{ end }}|{{ $result.Url }}|{{ $result.RedirectLocation }}|{{ $result.Position }}|{{ $result.ContentLength }}|{{ $result.ContentWords }}|{{ $result.ContentLines }}|
                 </div>
-                <tr class="result-{{ .StatusCode }}" style="background-color: {{.HTMLColor}};"><td><font color="black" class="status-code">{{ .StatusCode }}</font></td><td>{{ .Input }}</td><td>{{ .Position }}</td><td>{{ .ContentLength }}</td><td>{{ .ContentWords }}</td></tr>
+				<tr class="result-{{ $result.StatusCode }}" style="background-color: {{$result.HTMLColor}};"><td><font color="black" class="status-code">{{ $result.StatusCode }}</font></td>{{ range $keyword, $value := $result.Input }}<td>{{ $value | printf "%s" }}</td>{{ end }}</td><td>{{ $result.Url }}</td><td>{{ $result.RedirectLocation }}</td><td>{{ $result.Position }}</td><td>{{ $result.ContentLength }}</td><td>{{ $result.ContentWords }}</td><td>{{ $result.ContentLines }}</td></tr>
             {{end}}
         </tbody>
       </table>
@@ -85,7 +96,14 @@ const (
     </main>
 
     <!--JavaScript at end of body for optimized loading-->
+	<script src="https://code.jquery.com/jquery-3.4.1.min.js" integrity="sha256-CSXorXvZcTkaix6Yvo6HppcZGetbYMGWSFlBw8HfCJo=" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"></script>
+    <script type="text/javascript" charset="utf8" src="https://cdn.datatables.net/1.10.20/js/jquery.dataTables.js"></script>
+	<script>
+	$(document).ready( function () {
+		$('#ffufreport').DataTable();
+	} );
+	</script>
     <style>
       body {
         display: flex;
@@ -141,10 +159,16 @@ func writeHTML(config *ffuf.Config, results []Result) error {
 
 	ti := time.Now()
 
+	keywords := make([]string, 0)
+	for _, inputprovider := range config.InputProviders {
+		keywords = append(keywords, inputprovider.Keyword)
+	}
+
 	outHTML := htmlFileOutput{
 		CommandLine: config.CommandLine,
 		Time:        ti.Format(time.RFC3339),
 		Results:     results,
+		Keys:        keywords,
 	}
 
 	f, err := os.Create(config.OutputFile)

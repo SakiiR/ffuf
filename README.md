@@ -92,6 +92,7 @@ ffuf --input-cmd 'cat $FFUF_NUM.txt' -H "Content-Type: application/json" -X POST
 To define the test case for ffuf, use the keyword `FUZZ` anywhere in the URL (`-u`), headers (`-H`), or POST data (`-d`).
 
 ```
+Usage of ./ffuf:
   -D	DirSearch style wordlist compatibility mode. Used in conjunction with -e flag. Replaces %EXT% in wordlist entry with each of the extensions provided by -e.
   -H "Name: Value"
     	Header "Name: Value", separated by colon. Multiple -H flags are accepted.
@@ -100,43 +101,50 @@ To define the test case for ffuf, use the keyword `FUZZ` anywhere in the URL (`-
     	HTTP method to use (default "GET")
   -ac
     	Automatically calibrate filtering options
-  -acc
-      Custom auto-calibration string. Can be used multiple times. Implies -ac
-  -i
-      Dummy flag for copy as curl functionality (ignored)
+  -acc value
+    	Custom auto-calibration string. Can be used multiple times. Implies -ac
   -b "NAME1=VALUE1; NAME2=VALUE2"
     	Cookie data "NAME1=VALUE1; NAME2=VALUE2" for copy as curl functionality.
     	Results unpredictable when combined with -H "Cookie: ..."
-  -cookie
-      Cookie data (alias of -b)
   -c	Colorize output.
   -compressed
     	Dummy flag for copy as curl functionality (ignored) (default true)
+  -cookie value
+    	Cookie data (alias of -b)
   -d string
     	POST data
-  -data-ascii
-      POST data (alias of -d)
-  -data-binary
-      POST data (alias of -d)
   -data string
     	POST data (alias of -d)
+  -data-ascii string
+    	POST data (alias of -d)
+  -data-binary string
+    	POST data (alias of -d)
+  -debug-log string
+    	Write all of the internal logging to the specified file.
   -e string
     	Comma separated list of extensions to apply. Each extension provided will extend the wordlist entry once.
   -fc string
     	Filter HTTP status codes from response. Comma separated list of codes and ranges
+  -fl string
+    	Filter by amount of lines in response. Comma separated list of line counts and ranges
   -fr string
     	Filter regexp
   -fs string
     	Filter HTTP response size. Comma separated list of sizes and ranges
   -fw string
     	Filter by amount of words in response. Comma separated list of word counts and ranges
-  -input-cmd string
+  -i	Dummy flag for copy as curl functionality (ignored) (default true)
+  -input-cmd value
     	Command producing the input. --input-num is required when using this input method. Overrides -w.
   -input-num int
     	Number of inputs to test. Used in conjunction with --input-cmd. (default 100)
   -k	TLS identity verification
   -mc string
     	Match HTTP status codes from respose, use "all" to match every response code. (default "200,204,301,302,307,401,403")
+  -ml string
+    	Match amount of lines in response
+  -mode string
+    	Multi-wordlist operation mode. Available modes: clusterbomb, pitchfork (default "clusterbomb")
   -mr string
     	Match regexp
   -ms string
@@ -146,7 +154,7 @@ To define the test case for ffuf, use the keyword `FUZZ` anywhere in the URL (`-
   -o string
     	Write output to file
   -of string
-    	Output file format. Available formats: json, csv, ecsv (default "json")
+    	Output file format. Available formats: json, ejson, html, md, csv, ecsv (default "json")
   -p delay
     	Seconds of delay between requests, or a range of random delay. For example "0.1" or "0.1-2.0"
   -r	Follow redirects
@@ -163,12 +171,11 @@ To define the test case for ffuf, use the keyword `FUZZ` anywhere in the URL (`-
     	HTTP request timeout in seconds. (default 10)
   -u string
     	Target URL
-  -w string
-    	Wordlist file path or - to read from standard input
+  -v	Verbose output, printing full URL and redirect location (if any) with the results.
+  -w value
+    	Wordlist file path and (optional) custom fuzz keyword, using colon as delimiter. Use file path '-' to read from standard input. Can be supplied multiple times. Format: '/path/to/wordlist:KEYWORD'
   -x string
     	HTTP Proxy URL
-  -debug-log string
-      Write the debug logging information to the specified file.
 ```
 
 eg. `ffuf -u https://example.org/FUZZ -w /path/to/wordlist`
@@ -184,13 +191,38 @@ The only dependency of ffuf is Go 1.11. No dependencies outside of Go standard l
 ## Changelog
 
 - master
+  - New
+  - Changed
+    - Limit the use of `-e` (extensions) to a single keyword: FUZZ
+
+- v0.12
+  - New
+    - Added a new flag to select a multi wordlist operation mode: `--mode`, possible values: `clusterbomb` and `pitchfork`.
+    - Added a new output file format eJSON, for always base64 encoding the input data.
+    - Redirect location is always shown in the output files (when using `-o`)
+    - Full URL is always shown in the output files (when using `-o`)
+    - HTML output format got [DataTables](https://datatables.net/) support allowing realtime searches, sorting by column etc.
+    - New CLI flag `-v` for verbose output. Including full URL, and redirect location.
+    - SIGTERM monitoring, in order to catch keyboard interrupts an such, to be able to write `-o` files before exiting.
+  - Changed
+    - Fixed a bug in the default multi wordlist mode
+    - Fixed JSON output regression, where all the input data was always encoded in base64 
+    - `--debug-log` no correctly logs connection errors
+    - Removed `-l` flag in favor of `-v`
+    - More verbose information in banner shown in startup.
+
+- v0.11
 
   - New
+
     - New CLI flag: -l, shows target location of redirect responses
     - New CLI flac: -acc, custom auto-calibration strings
     - New CLI flag: -debug-log, writes the debug logging to the specified file.
+    - New CLI flags -ml and -fl, filters/matches line count in response
+    - Ability to use multiple wordlists / keywords by defining multiple -w command line flags. The if no keyword is defined, the default is FUZZ to keep backwards compatibility. Example: `-w "wordlists/custom.txt:CUSTOM" -H "RandomHeader: CUSTOM"`.
 
   - Changed
+
     - New CLI flag: -i, dummy flag that does nothing. for compatibility with copy as curl.
     - New CLI flag: -b/--cookie, cookie data for compatibility with copy as curl.
     - New Output format are available: HTML and Markdown table.

@@ -12,27 +12,29 @@ type WordlistInput struct {
 	config   *ffuf.Config
 	data     [][]byte
 	position int
+	keyword  string
 }
 
-func NewWordlistInput(conf *ffuf.Config) (*WordlistInput, error) {
+func NewWordlistInput(keyword string, value string, conf *ffuf.Config) (*WordlistInput, error) {
 	var wl WordlistInput
+	wl.keyword = keyword
 	wl.config = conf
-	wl.position = -1
+	wl.position = 0
 	var valid bool
 	var err error
 	// stdin?
-	if conf.Wordlist == "-" {
+	if value == "-" {
 		// yes
 		valid = true
 	} else {
 		// no
-		valid, err = wl.validFile(conf.Wordlist)
+		valid, err = wl.validFile(value)
 	}
 	if err != nil {
 		return &wl, err
 	}
 	if valid {
-		err = wl.readFile(conf.Wordlist)
+		err = wl.readFile(value)
 	}
 	return &wl, err
 }
@@ -42,13 +44,27 @@ func (w *WordlistInput) Position() int {
 	return w.position
 }
 
+//ResetPosition resets the position back to beginning of the wordlist.
+func (w *WordlistInput) ResetPosition() {
+	w.position = 0
+}
+
+//Keyword returns the keyword assigned to this InternalInputProvider
+func (w *WordlistInput) Keyword() string {
+	return w.keyword
+}
+
 //Next will increment the cursor position, and return a boolean telling if there's words left in the list
 func (w *WordlistInput) Next() bool {
-	w.position++
 	if w.position >= len(w.data) {
 		return false
 	}
 	return true
+}
+
+//IncrementPosition will increment the current position in the inputprovider data slice
+func (w *WordlistInput) IncrementPosition() {
+	w.position += 1
 }
 
 //Value returns the value from wordlist at current cursor position
@@ -105,7 +121,7 @@ func (w *WordlistInput) readFile(path string) error {
 			}
 		} else {
 			data = append(data, []byte(reader.Text()))
-			if len(w.config.Extensions) > 0 {
+			if w.keyword == "FUZZ" && len(w.config.Extensions) > 0 {
 				for _, ext := range w.config.Extensions {
 					data = append(data, []byte(reader.Text()+ext))
 				}
